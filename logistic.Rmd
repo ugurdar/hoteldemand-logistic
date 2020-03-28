@@ -1,0 +1,267 @@
+---
+title: "Hotel"
+author: "Uğur Dar"
+date: "28 03 2020"
+output: pdf_document
+---
+### Libraries
+
+```{r}
+library(knitr)
+library(tidyverse)
+library(ROCR)
+library(verification)
+```
+
+
+### Import the data
+
+```{r}
+data <- read_csv("hotel_bookings.csv")
+```
+
+\newpage
+
+# EDA
+
+```{r}
+glimpse(data)
+```
+
+\newpage
+
+
+```{r}
+ggplot(data,aes(x=factor(hotel))) +
+  geom_bar(col ="black",fill="#993333",alpha=0.5) +
+  theme(axis.text.x = element_text(face="bold", size=10)) +
+  scale_x_discrete("Hotel") +
+  scale_y_continuous("Count")
+```
+
+\newpage
+
+
+```{r}
+ggplot(data,aes(factor(arrival_date_month,levels=month.name))) +
+  geom_bar(col ="black",fill="#993333",alpha=0.5) +
+  theme(axis.text.x = element_text(face="bold", size=8, angle=30)) +
+  scale_y_continuous("Count",limits = c(0,15000),breaks=seq(0,15000,by=1500)) +
+  scale_x_discrete("Month")
+```
+
+```{r}
+d <- data %>% 
+  group_by(arrival_date_month) %>%
+  count() %>%
+  arrange(match(arrival_date_month,month.name))
+d <- data.frame(ArrivalDateMonth = d$arrival_date_month,N =d$n);kable(d)
+```
+
+\newpage
+
+```{r}
+ggplot(data = data,aes(factor(is_canceled)))+
+  geom_bar( col='black', fill="#993333", alpha = 0.5) +
+  facet_wrap(~hotel) +
+  scale_x_discrete("Canceled",labels = c("No","Yes")) +
+  scale_y_continuous("Count",limits = c(0,50000),breaks=seq(0,47222,by=5000))  +
+  theme(axis.text.x = element_text(face="bold", size=10))
+```
+
+```{r}
+canceledRate <- data %>%
+  group_by(Hotel = hotel) %>%
+  summarise(CanceledAverage = mean(is_canceled)) 
+canceledRate <- as.data.frame(canceledRate)
+kable(canceledRate)
+```
+
+\newpage
+
+```{r}
+ggplot(data = data, aes(x = factor(is_canceled), y = lead_time  )) + 
+  geom_boxplot(col='black', fill="#993333", alpha = 0.5) +
+  theme(axis.text.x = element_text(face="bold", size=10)) +
+  scale_y_continuous("Lead Time",limits = c(0,800),breaks=seq(0,800,by=100)) +
+  scale_x_discrete("Canceled",labels = c("No","Yes")) 
+```
+
+
+
+\newpage
+
+
+# Model Building
+
+## Missing Values
+
+```{r}
+data <- na.omit(data) # I just delete all of them.
+```
+
+## Partition data
+
+```{r}
+indeks <- sample(2,size = nrow(data), replace = T , prob=c(0.7,0.3))
+train <- data[indeks == 1, ]
+test <- data[indeks == 2, ]
+```
+
+# Logistic Regression
+
+```{r}
+set.seed(1234)
+glm.fit <- glm(is_canceled ~ hotel + lead_time + arrival_date_month + children +
+                        market_segment + is_repeated_guest + adults + babies +
+                        previous_cancellations +
+                        deposit_type + booking_changes  +
+                        reserved_room_type + adr + days_in_waiting_list + customer_type +
+                        total_of_special_requests, 
+                        data = train , family = "binomial")
+summary(glm.fit)
+
+```
+
+\newpage
+
+# Train
+
+## Prediction - Train
+
+```{r}
+train_pred <-predict(glm.fit, train,type = 'response')
+```
+
+## Cutoff 
+
+```{r}
+pred <- prediction(train_pred,train$is_canceled)
+perform <- performance(pred,"acc")
+max <- which.max(slot(perform,"y.values")[[1]])
+prob <- slot(perform,"x.values")[[1]][max]
+prob
+```
+
+
+## Accuracy - Train
+
+```{r}
+train_pred1 <- ifelse(train_pred >  prob, 1,0)
+mean(train$is_canceled == train_pred1) 
+```
+
+## Confusion Matrix - Train
+
+```{r}
+tble <- table(Actual = train$is_canceled,Predicted = train_pred1 );tble
+```
+
+## Classification Table - Train 
+
+```{r}
+TN <- tble[1,1]
+FN <- tble[2,1]
+FP <- tble[1,2]
+TP <- tble[2,2]
+N <- sum(tble[1,])
+P <- sum(tble[2,])
+Specificity <- FP/N
+Sensitivity <- TP/N
+df <- data.frame(Specificity,Sensitivity)
+kable(df)
+```
+
+## Missclassification Error - Train
+
+```{r}
+1 - sum(diag(tble))/sum(tble)
+```
+
+## AUC & ROC - Train
+
+### ROC - Train
+
+```{r}
+roc.plot(
+  train$is_canceled,
+  train_pred,
+  threshold = seq(0,max(train_pred),0.01)
+)
+```
+
+### AUC - Train
+```{r}
+auc <- performance(pred,"auc")
+auc <- unlist(slot(auc,"y.values"))
+auc
+```
+
+\newpage
+
+
+# Test
+
+## Prediction - Test
+
+```{r}
+test_pred <-predict(glm.fit, test,type = 'response')
+```
+
+
+## Accuracy - Test
+
+```{r}
+test_pred1 <- ifelse(test_pred > prob , 1,0)
+mean(test$is_canceled == test_pred1) 
+```
+
+## Confusion Matrix - Test
+
+```{r}
+tble1 <- table(Actual = test$is_canceled,Predicted = test_pred1 );tble1
+```
+
+## Classification Table - Test 
+
+```{r}
+TN <- tble1[1,1]
+FN <- tble1[2,1]
+FP <- tble1[1,2]
+TP <- tble1[2,2]
+N <- sum(tble[1,])
+P <- sum(tble[2,])
+Specificity <- FP/N
+Sensitivity <- TP/N
+df <- data.frame(Specificity,Sensitivity)
+kable(df)
+```
+
+\newpage
+
+## Missclassification Error - Test
+
+```{r}
+1 - sum(diag(tble1))/sum(tble1)
+```
+
+## AUC & ROC - Test
+
+### ROC - Test
+```{r}
+roc.plot(
+  test$is_canceled,
+  test_pred,
+  threshold = seq(0,max(test_pred),0.01)
+)
+```
+
+### AUC - Test
+```{r}
+pred1 <- prediction(test_pred,test$is_canceled)
+auc <- performance(pred1,"auc")
+auc <- unlist(slot(auc,"y.values"))
+auc
+```
+
+ROC and AUC are also seems good.
